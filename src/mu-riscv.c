@@ -430,71 +430,39 @@ void EX()
 
 }
 
-// Putting these definitions here, since they are only needed for the ID stage
-enum OPCODE_TYPE {
-    R = 0, I, S, B, J, U, ERROR
-};
-
-typedef struct {
-    enum OPCODE_TYPE type;
-    uint8_t code;
-} OPCODE;
-
-#define NUM_CODES 7
-static OPCODE opcodes[NUM_CODES] = {
-    {.type = R, .code = 0b0110011},
-    {.type = I, .code = 0b0010011},
-    {.type = I, .code = 0b0000011},
-    {.type = S, .code = 0b0100011},
-    {.type = B, .code = 0b1100011},
-    {.type = U, .code = 0b0110111},
-    {.type = J, .code = 0b1101111},
-};
-
-enum OPCODE_TYPE get_opcode_type(uint32_t cmd) {
-	enum OPCODE_TYPE retVal = ERROR;
-    for(int i = 0; i < NUM_CODES; i++) {
-        uint8_t cmp = cmd & BIT_MASK_7;
-        if(cmp == opcodes[i].code) {
-            retVal = opcodes[i].type;
-			break;
-        }
-    }
-	return retVal;
-}
-
 /************************************************************/
 /* instruction decode (ID) pipeline stage:                                                         */
 /************************************************************/
 void ID()
 {
-	enum OPCODE_TYPE instruction_type;
-	uint32_t ID_A, ID_B, imm, instruction;
+	uint8_t opcode;
+	uint32_t A, B, imm, instruction;
 
 	instruction = IF_ID.IR;
 
 	memset(&ID_EX, 0, sizeof(CPU_Pipeline_Reg));
 	ID_EX.PC = IF_ID.PC;
 
-	instruction_type = get_opcode_type(instruction);
-	switch(instruction_type)
+	opcode = GET_OPCODE(instruction);
+	switch(opcode)
 	{
-		case R:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+		case R_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = 0;
-		case I:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = 0;
+		case IMM_ALU_OPCODE:
+		case LOAD_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
 			imm = (instruction >> 20) & (BIT_MASK_12);
 			if (imm & 0x800)
 			{
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-		case S:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = 0;
+		case STORE_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
 			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
 			imm |= (instruction >> 7) & BIT_MASK_5;
 			if (imm & 0x800)
@@ -502,9 +470,9 @@ void ID()
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-		case B:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+		case BRANCH_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = ((instruction >> 31) & 1) << 12;
 			imm |= ((instruction >> 7) & 1) << 11;
 			imm |= ((instruction >> 25) & 0b111111) << 5;
@@ -514,9 +482,9 @@ void ID()
 				imm |= 0xFFFFFFE000;
 			}
 			break;
-		case J:
-			ID_A = 0;
-			ID_B = 0;
+		case JUMP_OPCODE:
+			A = 0;
+			B = 0;
 			imm = ((instruction >> 31) & 1) << 20;
 			imm |= ((instruction >> 12) & 0xFF) << 12;
 			imm |= ((instruction >> 20) & 1) << 11;
@@ -526,17 +494,17 @@ void ID()
 				imm |= 0xFFFFF00000;
 			}
 			break;
-		case U:
-			ID_A = 0;
-			ID_B = 0;
+		case 0b0110111: //LUI
+			A = 0;
+			B = 0;
 			imm = instruction & 0xFFFFF000;
 			break;
-		case ERROR:
+		default:
 			break;
 	}
 
-	ID_EX.A = ID_A;
-	ID_EX.B = ID_B;
+	ID_EX.A = A;
+	ID_EX.B = B;
 	ID_EX.imm = imm;
 }
 
