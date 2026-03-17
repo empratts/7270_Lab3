@@ -362,7 +362,7 @@ void EX()
 void ID()
 {
 	uint8_t opcode;
-	uint32_t ID_A, ID_B, imm, instruction;
+	uint32_t A, B, imm, instruction;
 
 	instruction = IF_ID.IR;
 
@@ -373,13 +373,13 @@ void ID()
 	switch(opcode)
 	{
 		case R_OPCODE:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = 0;
 		case IMM_ALU_OPCODE:
 		case LOAD_OPCODE:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = 0;
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
 			imm = (instruction >> 20) & (BIT_MASK_12);
 			if (imm & 0x800)
 			{
@@ -387,8 +387,8 @@ void ID()
 			}
 			break;
 		case STORE_OPCODE:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = 0;
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
 			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
 			imm |= (instruction >> 7) & BIT_MASK_5;
 			if (imm & 0x800)
@@ -397,8 +397,8 @@ void ID()
 			}
 			break;
 		case BRANCH_OPCODE:
-			ID_A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			ID_B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = ((instruction >> 31) & 1) << 12;
 			imm |= ((instruction >> 7) & 1) << 11;
 			imm |= ((instruction >> 25) & 0b111111) << 5;
@@ -409,8 +409,8 @@ void ID()
 			}
 			break;
 		case JUMP_OPCODE:
-			ID_A = 0;
-			ID_B = 0;
+			A = 0;
+			B = 0;
 			imm = ((instruction >> 31) & 1) << 20;
 			imm |= ((instruction >> 12) & 0xFF) << 12;
 			imm |= ((instruction >> 20) & 1) << 11;
@@ -421,16 +421,16 @@ void ID()
 			}
 			break;
 		case 0b0110111: //LUI
-			ID_A = 0;
-			ID_B = 0;
+			A = 0;
+			B = 0;
 			imm = instruction & 0xFFFFF000;
 			break;
-		case ERROR:
+		default:
 			break;
 	}
 
-	ID_EX.A = ID_A;
-	ID_EX.B = ID_B;
+	ID_EX.A = A;
+	ID_EX.B = B;
 	ID_EX.imm = imm;
 }
 
