@@ -353,7 +353,81 @@ void MEM()
 /************************************************************/
 void EX()
 {
+	// CPU_Pipeline_Reg EX_MEM;
+	enum OPCODE_TYPE instruction_type;
+	uint32_t A, B, imm, instruction;
+
+	instruction = ID_EX.IR;
+
+	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
+	EX_MEM.PC = ID_EX.PC;
+
+	instruction_type = get_opcode_type(instruction);
+	switch(instruction_type)
+	{
+		case R:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			imm = 0;
+		case I:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
+			imm = (instruction >> 20) & (BIT_MASK_12);
+			if (imm & 0x800)
+			{
+				imm |= 0xFFFFFFF000;
+			}
+			break;
+		case S:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
+			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
+			imm |= (instruction >> 7) & BIT_MASK_5;
+			if (imm & 0x800)
+			{
+				imm |= 0xFFFFFFF000;
+			}
+			break;
+		case B:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			imm = ((instruction >> 31) & 1) << 12;
+			imm |= ((instruction >> 7) & 1) << 11;
+			imm |= ((instruction >> 25) & 0b111111) << 5;
+			imm |= ((instruction >> 8) & 0b1111) << 1;
+			if (imm & 0x1000)
+			{
+				imm |= 0xFFFFFFE000;
+			}
+			break;
+		case J:
+			A = 0;
+			B = 0;
+			imm = ((instruction >> 31) & 1) << 20;
+			imm |= ((instruction >> 12) & 0xFF) << 12;
+			imm |= ((instruction >> 20) & 1) << 11;
+			imm |= ((instruction >> 21) & 0x3FF) << 1;
+			if (imm & 0x100000)
+			{
+				imm |= 0xFFFFF00000;
+			}
+			break;
+		case U:
+			A = 0;
+			B = 0;
+			imm = instruction & 0xFFFFF000;
+			break;
+		case ERROR:
+			break;
+	}
+
+	EX_MEM.A = A;
+	EX_MEM.B = B;
+	EX_MEM.imm = imm;
+
 	
+
+
 }
 
 // Putting these definitions here, since they are only needed for the ID stage
@@ -478,7 +552,6 @@ void IF()
 	memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
 	IF_ID.IR = instuction;
 	IF_ID.PC = CURRENT_STATE.PC;
-
 
     // Increment the PC by 4 to point to the next instruction.
 	// If this was a branch/jump and we were supposed to go somewhere else, this will be handled by ID in the NEXT clock cycle
