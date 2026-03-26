@@ -356,15 +356,17 @@ void EX()
 	// CPU_Pipeline_Reg EX_MEM;
 	uint8_t opcode, funct3, funct7;
 	uint32_t A, B, imm, instruction;
+	int32_t A_signed, B_signed, imm_signed;
 	uint32_t ALU_Result;
 
 	instruction = ID_EX.IR;
 
 	A = ID_EX.A;
 	B = ID_EX.B;
-	imm = ID-EX.imm;
-
-
+	A_signed = ID_EX.A;
+	B_signed = ID_EX.B;
+	imm = ID_EX.imm;
+	imm_signed = ID_EX.imm;
 
 	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 	EX_MEM.PC = ID_EX.PC;
@@ -380,19 +382,26 @@ void EX()
 	{
 		case R_OPCODE:
 			switch(funct3)
+			{
 				case 0x0:
 					if(funct7 == 0x00)
-						ALU_Result = A + B;
-					else(funct7 == 0x20)
-						ALU_Result = A - B;
+						{
+							ALU_Result = A + B;
+						}
+					else if(funct7 == 0x20)
+						{
+							ALU_Result = A - B;
+						}
 					break;
 				case 0x1:
 					ALU_Result = A << B;
 					break;
 				case 0x2:
-					ALU_Result = (A < B) ? 1:0;
+					// Signed comparison uses int32_t
+					ALU_Result = (A_signed < B_signed) ? 1:0;
 					break;
 				case 0x3:
+					// Unsigned comparison uses uint32_t
 					ALU_Result = (A < B) ? 1:0;
 					//Wasn't sure how to make a difference between 0x2
 					// and 0x3?
@@ -401,6 +410,15 @@ void EX()
 					ALU_Result = A ^ B;
 					break;
 				case 0x5:
+					if(funct7 == 0x00)
+						{	// C does a logical shift on unsiged values
+							ALU_Result = A >> B;
+						}
+					else if(funct7 == 0x20)
+						{	//C does an aritmetic shift on signed values
+							ALU_Result = A_signed >> B_signed;
+						}
+					break;
 					//I know there is a difference here but I am not sure
 					// how to show the diffence.
 				case 0x6:
@@ -408,37 +426,47 @@ void EX()
 					break;
 				case 0x7:
 					ALU_Result = A & B;
-					break;			
+					break;
+			}
 			break;
 		case IMM_ALU_OPCODE:
-			switch(funct3):
-				case(0x0):
+			switch(funct3)
+			{
+				case 0x0:
 					ALU_Result = A + imm;
 					break;
-				case(0x1):
-					ALU_Result = A << immd[0:4]; //not sure i did this right
+				case 0x1:
+					if (imm >> 5 == 0)
+					{
+						ALU_Result = A << (imm & 0b11111); //not sure i did this right
+					}
 					break; 
-				case(0x2):
-					ALU_Result = (A < imm) ? 1:0;
+				case 0x2:
+					ALU_Result = (A_signed < imm_signed) ? 1:0;
 					break;
-				case(0x3):
-					ALU_Result = (A < imm) ? 1:0; //same question as before.
+				case 0x3:
+					ALU_Result = (A < (imm & 0xFFF)) ? 1:0; //same question as before.
 					break;
-				case(0x4):
+				case 0x4:
 					ALU_Result = A ^ imm;
 					break;
-				case(0x5):
+				case 0x5:
 					if(funct7 == 0x00)
-						ALU_Result = A >> imm[0:4]; //?????
-					else(funct7 == 0x20)
-						ALU_Result = a >> imm[0:4]; //?????
+						{
+							ALU_Result = A >> (imm & 0b11111); //?????
+						}
+					else if(funct7 == 0x20)
+						{
+							ALU_Result = A >> (imm & 0b11111); //?????
+						}
 					break;
-				case(0x6):
+				case 0x6:
 					ALU_Result = A | imm;
 					break;
-				case(0x7):
+				case 0x7:
 					ALU_Result = A & imm;
 					break;
+			}
 		case LOAD_OPCODE:
 		case STORE_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
