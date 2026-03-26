@@ -354,37 +354,92 @@ void MEM()
 void EX()
 {
 	// CPU_Pipeline_Reg EX_MEM;
-	uint8_t opcode;
+	uint8_t opcode, funct3, funct7;
 	uint32_t A, B, imm, instruction;
-
 	uint32_t ALU_Result;
 
 	instruction = ID_EX.IR;
 
 	A = ID_EX.A;
+	B = ID_EX.B;
+	imm = ID-EX.imm;
+
 
 
 	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 	EX_MEM.PC = ID_EX.PC;
+	EX_MEM.IR = ID_EX.IR;
+	EX_MEM.A = A;
+	EX_MEM.B = B;
+	EX_MEM.imm = imm;
 
 	opcode = GET_OPCODE(instruction);
+	funct3 = (instruction >> 12) & BIT_MASK_3;
+	funct7 = (instruction >> 25) & BIT_MASK_7;
 	switch(opcode)
 	{
 		case R_OPCODE:
-			ALU_Result = A + B
-			// Go through the PRocessing function and look at how that is parsed out this will have to be similar.
-			// same for all of the folloing cases
+			switch(funct3)
+				case 0x0:
+					if(funct7 == 0x00)
+						ALU_Result = A + B;
+					else(funct7 == 0x20)
+						ALU_Result = A - B;
+					break;
+				case 0x1:
+					ALU_Result = A << B;
+					break;
+				case 0x2:
+					ALU_Result = (A < B) ? 1:0;
+					break;
+				case 0x3:
+					ALU_Result = (A < B) ? 1:0;
+					//Wasn't sure how to make a difference between 0x2
+					// and 0x3?
+					break;
+				case 0x4:
+					ALU_Result = A ^ B;
+					break;
+				case 0x5:
+					//I know there is a difference here but I am not sure
+					// how to show the diffence.
+				case 0x6:
+					ALU_Result = A | B;
+					break;
+				case 0x7:
+					ALU_Result = A & B;
+					break;			
 			break;
 		case IMM_ALU_OPCODE:
+			switch(funct3):
+				case(0x0):
+					ALU_Result = A + imm;
+					break;
+				case(0x1):
+					ALU_Result = A << immd[0:4]; //not sure i did this right
+					break; 
+				case(0x2):
+					ALU_Result = (A < imm) ? 1:0;
+					break;
+				case(0x3):
+					ALU_Result = (A < imm) ? 1:0; //same question as before.
+					break;
+				case(0x4):
+					ALU_Result = A ^ imm;
+					break;
+				case(0x5):
+					if(funct7 == 0x00)
+						ALU_Result = A >> imm[0:4]; //?????
+					else(funct7 == 0x20)
+						ALU_Result = a >> imm[0:4]; //?????
+					break;
+				case(0x6):
+					ALU_Result = A | imm;
+					break;
+				case(0x7):
+					ALU_Result = A & imm;
+					break;
 		case LOAD_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = 0;
-			imm = (instruction >> 20) & (BIT_MASK_12);
-			if (imm & 0x800)
-			{
-				imm |= 0xFFFFFFF000;
-			}
-			break;
 		case STORE_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
 			B = 0;
