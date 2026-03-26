@@ -353,7 +353,138 @@ void MEM()
 /************************************************************/
 void EX()
 {
-	
+	// CPU_Pipeline_Reg EX_MEM;
+	uint8_t opcode, funct3, funct7;
+	uint32_t A, B, imm, instruction;
+	uint32_t ALU_Result;
+
+	instruction = ID_EX.IR;
+
+	A = ID_EX.A;
+	B = ID_EX.B;
+	imm = ID-EX.imm;
+
+
+
+	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
+	EX_MEM.PC = ID_EX.PC;
+	EX_MEM.IR = ID_EX.IR;
+	EX_MEM.A = A;
+	EX_MEM.B = B;
+	EX_MEM.imm = imm;
+
+	opcode = GET_OPCODE(instruction);
+	funct3 = (instruction >> 12) & BIT_MASK_3;
+	funct7 = (instruction >> 25) & BIT_MASK_7;
+	switch(opcode)
+	{
+		case R_OPCODE:
+			switch(funct3)
+				case 0x0:
+					if(funct7 == 0x00)
+						ALU_Result = A + B;
+					else(funct7 == 0x20)
+						ALU_Result = A - B;
+					break;
+				case 0x1:
+					ALU_Result = A << B;
+					break;
+				case 0x2:
+					ALU_Result = (A < B) ? 1:0;
+					break;
+				case 0x3:
+					ALU_Result = (A < B) ? 1:0;
+					//Wasn't sure how to make a difference between 0x2
+					// and 0x3?
+					break;
+				case 0x4:
+					ALU_Result = A ^ B;
+					break;
+				case 0x5:
+					//I know there is a difference here but I am not sure
+					// how to show the diffence.
+				case 0x6:
+					ALU_Result = A | B;
+					break;
+				case 0x7:
+					ALU_Result = A & B;
+					break;			
+			break;
+		case IMM_ALU_OPCODE:
+			switch(funct3):
+				case(0x0):
+					ALU_Result = A + imm;
+					break;
+				case(0x1):
+					ALU_Result = A << immd[0:4]; //not sure i did this right
+					break; 
+				case(0x2):
+					ALU_Result = (A < imm) ? 1:0;
+					break;
+				case(0x3):
+					ALU_Result = (A < imm) ? 1:0; //same question as before.
+					break;
+				case(0x4):
+					ALU_Result = A ^ imm;
+					break;
+				case(0x5):
+					if(funct7 == 0x00)
+						ALU_Result = A >> imm[0:4]; //?????
+					else(funct7 == 0x20)
+						ALU_Result = a >> imm[0:4]; //?????
+					break;
+				case(0x6):
+					ALU_Result = A | imm;
+					break;
+				case(0x7):
+					ALU_Result = A & imm;
+					break;
+		case LOAD_OPCODE:
+		case STORE_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = 0;
+			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
+			imm |= (instruction >> 7) & BIT_MASK_5;
+			if (imm & 0x800)
+			{
+				imm |= 0xFFFFFFF000;
+			}
+			break;
+		case BRANCH_OPCODE:
+			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			imm = ((instruction >> 31) & 1) << 12;
+			imm |= ((instruction >> 7) & 1) << 11;
+			imm |= ((instruction >> 25) & 0b111111) << 5;
+			imm |= ((instruction >> 8) & 0b1111) << 1;
+			if (imm & 0x1000)
+			{
+				imm |= 0xFFFFFFE000;
+			}
+			break;
+		case JUMP_OPCODE:
+			A = 0;
+			B = 0;
+			imm = ((instruction >> 31) & 1) << 20;
+			imm |= ((instruction >> 12) & 0xFF) << 12;
+			imm |= ((instruction >> 20) & 1) << 11;
+			imm |= ((instruction >> 21) & 0x3FF) << 1;
+			if (imm & 0x100000)
+			{
+				imm |= 0xFFFFF00000;
+			}
+			break;
+		case 0b0110111: //LUI
+			A = 0;
+			B = 0;
+			imm = instruction & 0xFFFFF000;
+			break;
+		default:
+			break;
+	}
+
+	EX_MEM.ALUOutput = ALU_Result;
+
 }
 
 /************************************************************/
@@ -447,7 +578,6 @@ void IF()
 	memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
 	IF_ID.IR = instuction;
 	IF_ID.PC = CURRENT_STATE.PC;
-
 
     // Increment the PC by 4 to point to the next instruction.
 	// If this was a branch/jump and we were supposed to go somewhere else, this will be handled by ID in the NEXT clock cycle
