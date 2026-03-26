@@ -376,6 +376,7 @@ void ID()
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
 			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = 0;
+			break;
 		case IMM_ALU_OPCODE:
 		case LOAD_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
