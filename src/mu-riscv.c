@@ -354,22 +354,29 @@ void MEM()
 void EX()
 {
 	// CPU_Pipeline_Reg EX_MEM;
-	enum OPCODE_TYPE instruction_type;
+	uint8_t opcode;
 	uint32_t A, B, imm, instruction;
 
+	uint32_t ALU_Result;
+
 	instruction = ID_EX.IR;
+
+	A = ID_EX.A;
+
 
 	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 	EX_MEM.PC = ID_EX.PC;
 
-	instruction_type = get_opcode_type(instruction);
-	switch(instruction_type)
+	opcode = GET_OPCODE(instruction);
+	switch(opcode)
 	{
-		case R:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
-			imm = 0;
-		case I:
+		case R_OPCODE:
+			ALU_Result = A + B
+			// Go through the PRocessing function and look at how that is parsed out this will have to be similar.
+			// same for all of the folloing cases
+			break;
+		case IMM_ALU_OPCODE:
+		case LOAD_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
 			B = 0;
 			imm = (instruction >> 20) & (BIT_MASK_12);
@@ -378,7 +385,7 @@ void EX()
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-		case S:
+		case STORE_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
 			B = 0;
 			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
@@ -388,7 +395,7 @@ void EX()
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-		case B:
+		case BRANCH_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
 			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
 			imm = ((instruction >> 31) & 1) << 12;
@@ -400,7 +407,7 @@ void EX()
 				imm |= 0xFFFFFFE000;
 			}
 			break;
-		case J:
+		case JUMP_OPCODE:
 			A = 0;
 			B = 0;
 			imm = ((instruction >> 31) & 1) << 20;
@@ -412,21 +419,16 @@ void EX()
 				imm |= 0xFFFFF00000;
 			}
 			break;
-		case U:
+		case 0b0110111: //LUI
 			A = 0;
 			B = 0;
 			imm = instruction & 0xFFFFF000;
 			break;
-		case ERROR:
+		default:
 			break;
 	}
 
-	EX_MEM.A = A;
-	EX_MEM.B = B;
-	EX_MEM.imm = imm;
-
-	
-
+	EX_MEM.ALUOutput = ALU_Result;
 
 }
 
