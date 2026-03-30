@@ -1,6 +1,10 @@
 #include "mu-riscv.h"
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#define FIXED_PRINT_WIDTH 20
 
 /***************************************************************/
 /* Print out a list of commands available                                                                  */
@@ -56,6 +60,33 @@ void mem_write_32(uint32_t address, uint32_t value)
 			MEM_REGIONS[i].mem[offset+3] = (value >> 24) & 0xFF;
 			MEM_REGIONS[i].mem[offset+2] = (value >> 16) & 0xFF;
 			MEM_REGIONS[i].mem[offset+1] = (value >>  8) & 0xFF;
+			MEM_REGIONS[i].mem[offset+0] = (value >>  0) & 0xFF;
+		}
+	}
+}
+
+void mem_write_16(uint32_t address, uint16_t value)
+{
+	int i;
+	uint32_t offset;
+	for (i = 0; i < NUM_MEM_REGION; i++) {
+		if ( (address >= MEM_REGIONS[i].begin) && (address <= MEM_REGIONS[i].end) ) {
+			offset = address - MEM_REGIONS[i].begin;
+
+			MEM_REGIONS[i].mem[offset+1] = (value >>  8) & 0xFF;
+			MEM_REGIONS[i].mem[offset+0] = (value >>  0) & 0xFF;
+		}
+	}
+}
+
+void mem_write_8(uint32_t address, uint8_t value)
+{
+	int i;
+	uint32_t offset;
+	for (i = 0; i < NUM_MEM_REGION; i++) {
+		if ( (address >= MEM_REGIONS[i].begin) && (address <= MEM_REGIONS[i].end) ) {
+			offset = address - MEM_REGIONS[i].begin;
+
 			MEM_REGIONS[i].mem[offset+0] = (value >>  0) & 0xFF;
 		}
 	}
@@ -260,12 +291,18 @@ void reset() {
 		memset(MEM_REGIONS[i].mem, 0, region_size);
 	}
 
+	memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
+	memset(&ID_EX, 0, sizeof(CPU_Pipeline_Reg));
+	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
+	memset(&MEM_WB, 0, sizeof(CPU_Pipeline_Reg));
+
 	/*load program*/
 	load_program();
 
 	/*reset PC*/
 	INSTRUCTION_COUNT = 0;
 	CURRENT_STATE.PC =  MEM_TEXT_BEGIN;
+	CURRENT_STATE.REGS[2] = MEM_STACK_BEGIN;
 	NEXT_STATE = CURRENT_STATE;
 	RUN_FLAG = TRUE;
 }
@@ -337,7 +374,43 @@ void handle_pipeline()
 /************************************************************/
 void WB()
 {
+	uint8_t opcode, rd;
+	uint32_t instruction;
 
+	instruction = MEM_WB.IR;
+
+	opcode = GET_OPCODE(instruction);
+	rd = (instruction >> 7) & BIT_MASK_5;
+	
+	switch(opcode)
+	{
+		case 0:
+			// Empty stage (hardware nop), don't count an instruction
+			break;
+		case 0b1110011:
+			// Check for syscall
+			if (MEM_WB.imm == 0)
+			{ 
+				if (CURRENT_STATE.REGS[17] == 10)
+				{
+					RUN_FLAG = false;
+					printf("Program has exited with code %d\n", CURRENT_STATE.REGS[10]);
+				}
+			}
+		case R_OPCODE:
+		case IMM_ALU_OPCODE:
+		case LOAD_OPCODE:
+		case 0b0110111: //LUI
+			if (rd)
+			{
+				NEXT_STATE.REGS[rd] = MEM_WB.ALUOutput;
+			}
+			INSTRUCTION_COUNT += 1;
+			break;
+		default:
+			INSTRUCTION_COUNT += 1;
+			break;
+	}
 }
 
 /************************************************************/
@@ -345,7 +418,65 @@ void WB()
 /************************************************************/
 void MEM()
 {
-	
+	uint8_t opcode, funct3;
+	uint32_t instruction, address;
+	instruction = EX_MEM.IR;
+	address = EX_MEM.ALUOutput;
+	int8_t lb_value;
+	int16_t lh_value;
+	uint32_t loaded_value;
+
+	memset(&MEM_WB, 0, sizeof(CPU_Pipeline_Reg));
+	MEM_WB.PC = EX_MEM.PC;
+	MEM_WB.IR = EX_MEM.IR;
+	MEM_WB.imm = EX_MEM.imm;
+
+	loaded_value = 0;
+	opcode = GET_OPCODE(instruction);
+	funct3 = (instruction >> 12) & BIT_MASK_3;
+	switch(opcode)
+	{
+		case LOAD_OPCODE:
+			switch (funct3)
+			{
+				case 0x0: // lb
+					lb_value = mem_read_32(address) & 0xFF;
+					loaded_value = lb_value; // This forces sign extention
+					break;
+				case 0x1: // lh
+					lh_value = mem_read_32(address) & 0xFFFF;
+					loaded_value = lh_value; // This forces sign extention
+					break;
+				case 0x2:
+					loaded_value = mem_read_32(address);
+					break;
+				case 0x4: // lbu
+					loaded_value = mem_read_32(address) & 0xFF;
+					break;
+				case 0x5: // lhu
+					loaded_value = mem_read_32(address) & 0xFFFF;
+					break;
+			}
+			MEM_WB.ALUOutput = loaded_value;
+			break;
+		case STORE_OPCODE:
+			switch (funct3)
+			{
+				case 0x0: // sb
+					mem_write_8(address, EX_MEM.B & 0xFF);
+					break;
+				case 0x1: // lh
+					mem_write_16(address, EX_MEM.B & 0xFFFF);
+					break;
+				case 0x2:
+					mem_write_32(address, EX_MEM.B);
+					break;
+			}
+			break;
+		default:
+			MEM_WB.ALUOutput = EX_MEM.ALUOutput;
+			break;
+	}
 }
 
 /************************************************************/
@@ -367,6 +498,7 @@ void EX()
 	B_signed = ID_EX.B;
 	imm = ID_EX.imm;
 	imm_signed = ID_EX.imm;
+	ALU_Result = 0;
 
 	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 	EX_MEM.PC = ID_EX.PC;
@@ -468,44 +600,17 @@ void EX()
 					break;
 			}
 		case LOAD_OPCODE:
+			ALU_Result = A + imm;
+			break;
 		case STORE_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = 0;
-			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
-			imm |= (instruction >> 7) & BIT_MASK_5;
-			if (imm & 0x800)
-			{
-				imm |= 0xFFFFFFF000;
-			}
+			ALU_Result = A + imm;
 			break;
 		case BRANCH_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
-			imm = ((instruction >> 31) & 1) << 12;
-			imm |= ((instruction >> 7) & 1) << 11;
-			imm |= ((instruction >> 25) & 0b111111) << 5;
-			imm |= ((instruction >> 8) & 0b1111) << 1;
-			if (imm & 0x1000)
-			{
-				imm |= 0xFFFFFFE000;
-			}
 			break;
 		case JUMP_OPCODE:
-			A = 0;
-			B = 0;
-			imm = ((instruction >> 31) & 1) << 20;
-			imm |= ((instruction >> 12) & 0xFF) << 12;
-			imm |= ((instruction >> 20) & 1) << 11;
-			imm |= ((instruction >> 21) & 0x3FF) << 1;
-			if (imm & 0x100000)
-			{
-				imm |= 0xFFFFF00000;
-			}
 			break;
 		case 0b0110111: //LUI
-			A = 0;
-			B = 0;
-			imm = instruction & 0xFFFFF000;
+			ALU_Result = imm;
 			break;
 		default:
 			break;
@@ -524,9 +629,13 @@ void ID()
 	uint32_t A, B, imm, instruction;
 
 	instruction = IF_ID.IR;
+	imm = 0;
+	A = 0;
+	B = 0;
 
 	memset(&ID_EX, 0, sizeof(CPU_Pipeline_Reg));
 	ID_EX.PC = IF_ID.PC;
+	ID_EX.IR = IF_ID.IR;
 
 	opcode = GET_OPCODE(instruction);
 	switch(opcode)
@@ -548,8 +657,8 @@ void ID()
 			break;
 		case STORE_OPCODE:
 			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = 0;
-			imm = ((instruction >> 25) & BIT_MASK_7) << 7;
+			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			imm = ((instruction >> 25) & BIT_MASK_7) << 5;
 			imm |= (instruction >> 7) & BIT_MASK_5;
 			if (imm & 0x800)
 			{
@@ -619,6 +728,7 @@ void IF()
 void initialize() {
 	init_memory();
 	CURRENT_STATE.PC = MEM_TEXT_BEGIN;
+	CURRENT_STATE.REGS[2] = MEM_STACK_BEGIN;
 	NEXT_STATE = CURRENT_STATE;
 	RUN_FLAG = TRUE;
 }
@@ -733,7 +843,7 @@ void handle_s_print(uint32_t bincmd) {
 	uint8_t f3 = bincmd >> 12 & BIT_MASK_3;
 	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
 	uint8_t rs2 = bincmd >> 20 & BIT_MASK_5;
-	uint8_t imm11 = bincmd >> 25 & BIT_MASK_7;
+	uint8_t imm11 = (bincmd >> 25 & BIT_MASK_7) << 5;
 	uint16_t imm = (imm11 | imm4);
 	switch(f3) {
 		case 0x0:
@@ -901,12 +1011,325 @@ void print_b_cmd(char* cmd_name, uint8_t rs1, uint8_t rs2, uint16_t imm) {
 	printf("%s x%d, x%d, %d", cmd_name, rs1, rs2, imm);
 }
 
+void print_r_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    uint8_t count;
+    count = printf("%s x%d, x%d, x%d", cmd_name, rd, rs1, rs2);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void print_s_cmd_fixed_width(char* cmd_name, uint8_t rs2, uint8_t offset, uint8_t rs1) {
+    uint8_t count;
+    count = printf("%s x%d, %d(x%d)", cmd_name, rs2, offset, rs1);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void print_i_type1_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+    uint8_t count;
+    count = printf("%s x%d, x%d, %d", cmd_name, rd, rs1, imm);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void print_i_type2_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+    uint8_t count;
+    count = printf("%s x%d, %d(x%d)", cmd_name, rd, imm, rs1);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void print_b_cmd_fixed_width(char* cmd_name, uint8_t rs1, uint8_t rs2, uint16_t imm) {
+	uint8_t count;
+    count = printf("%s x%d, x%d, %d", cmd_name, rs1, rs2, imm);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void handle_r_print_fixed_width(uint32_t bincmd) {
+	uint8_t rd = bincmd >> 7 & BIT_MASK_5;
+	uint8_t funct3 = bincmd >> 12 & BIT_MASK_3;
+	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
+	uint8_t rs2 = bincmd >> 20 & BIT_MASK_5;
+	uint8_t funct7 = bincmd >> 25 & BIT_MASK_7;
+	switch(funct3) {
+		case 0x0:
+			switch(funct7){
+				case 0x0:
+					print_r_cmd_fixed_width("add", rd, rs1, rs2);
+					break;
+				case 0x20:
+					print_r_cmd_fixed_width("sub", rd, rs1, rs2);
+					break;
+				default:
+					printf("No funct7(%d) for funct3(%d) found for R-type.", funct7, funct3);
+					break;
+			}
+			break;
+		case 0x1:
+			print_r_cmd_fixed_width("sll", rd, rs1, rs2);
+			break;
+		case 0x2:
+			print_r_cmd_fixed_width("slt", rd, rs1, rs2);
+			break;
+		case 0x3:
+			print_r_cmd_fixed_width("sltu", rd, rs1, rs2);
+			break;
+		case 0x4:
+			print_r_cmd_fixed_width("xor", rd, rs1, rs2);
+			break;
+		case 0x5:
+			switch(funct7){
+				case 0x0:
+					print_r_cmd_fixed_width("srl", rd, rs1, rs2);
+					break;
+				case 0x20:
+					print_r_cmd_fixed_width("sra", rd, rs1, rs2);
+					break;
+				default:
+					printf("No funct7(%d) for funct3(%d) found for R-type.", funct7, funct3);
+					break;
+			}
+			break;
+		case 0x6:
+			print_r_cmd_fixed_width("or", rd, rs1, rs2);
+			break;
+		case 0x7:
+			print_r_cmd_fixed_width("and", rd, rs1, rs2);
+			break;
+		default:
+			printf("Unknown funct3(%d) in R-type", funct3);
+			break;
+	}
+}
+
+void handle_s_print_fixed_width(uint32_t bincmd) {
+	uint8_t imm4 = bincmd >> 7 & BIT_MASK_5;
+	uint8_t f3 = bincmd >> 12 & BIT_MASK_3;
+	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
+	uint8_t rs2 = bincmd >> 20 & BIT_MASK_5;
+	uint8_t imm11 = (bincmd >> 25 & BIT_MASK_7) << 5;
+	uint16_t imm = (imm11 | imm4);
+	switch(f3) {
+		case 0x0:
+			print_s_cmd_fixed_width("sb", rs2, imm, rs1);
+			break;
+		case 0x1:
+			print_s_cmd_fixed_width("sh", rs2, imm, rs1);
+			break;
+		case 0x2:
+			print_s_cmd_fixed_width("sw", rs2, imm, rs1);
+			break;
+		default:
+			printf("Unknown funct3(%d) in S type", f3);
+			break;
+	}
+}
+
+void handle_i_print_fixed_width(uint32_t bincmd) {
+
+	uint8_t opcode = GET_OPCODE(bincmd);
+	uint8_t rd = bincmd >> 7 & BIT_MASK_5;
+	uint8_t funct3 = bincmd >> 12 & BIT_MASK_3;
+	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
+	uint16_t imm = bincmd >> 20 & (BIT_MASK_12);
+	switch(opcode) {
+		case IMM_ALU_OPCODE:
+			switch(funct3) {
+				case 0x0: 
+					print_i_type1_cmd_fixed_width("addi", rd, rs1, imm);
+					break;
+				case 0x1:
+					print_i_type1_cmd_fixed_width("slli", rd, rs1, imm);
+					break;
+				case 0x2:
+					print_i_type1_cmd_fixed_width("slti", rd, rs1, imm);
+					break;
+				case 0x3:
+					print_i_type1_cmd_fixed_width("sltiu", rd, rs1, imm);
+					break;
+				case 0x4:
+					print_i_type1_cmd_fixed_width("xori", rd, rs1, imm);
+					break;
+				case 0x5:
+					;
+					uint8_t imm5 = imm >> 5;
+					switch(imm5){
+						case 0:
+							print_i_type1_cmd_fixed_width("srli", rd, rs1, imm);
+							break;
+						case 0x20:
+							print_i_type1_cmd_fixed_width("srai", rd, rs1, imm);
+							break;
+						default:
+							printf("Invalid imm[11:5](%d) for I-Type opcode(%d) funct3(%d)", imm5, opcode, funct3);
+							break;
+					}
+					break;
+				case 0x6:
+					print_i_type1_cmd_fixed_width("ori", rd, rs1, imm);
+					break;
+				case 0x7:
+					print_i_type1_cmd_fixed_width("andi", rd, rs1, imm);
+					break;
+				default:
+					printf("Invalid funct3(%d) for I-type opcode(%d)", funct3, opcode);
+					break;
+			}
+			break;
+		case LOAD_OPCODE:
+			switch(funct3){
+				case 0x0:
+					print_i_type2_cmd_fixed_width("lb", rd, rs1, imm);
+					break;
+				case 0x1:
+					print_i_type2_cmd_fixed_width("lh", rd, rs1, imm);
+					break;
+				case 0x2:
+					print_i_type2_cmd_fixed_width("lw", rd, rs1, imm);
+					break;
+				case 0x4:
+					print_i_type2_cmd_fixed_width("lbu", rd, rs1, imm);
+					break;
+				case 0x5:
+					print_i_type2_cmd_fixed_width("lhu", rd, rs1, imm);
+					break;
+				default:
+					printf("Unknown funct3(%d) for I-type opcode(%d).", funct3, opcode);
+					break;
+			}
+			break;
+		default:
+			printf("Unknown opcode(%d) for I-Type.", opcode);
+			break;
+	}
+
+}
+
+void handle_b_print_fixed_width(uint32_t bincmd) {
+	// b type all gross...
+	uint16_t scrambled_imm =(((bincmd >> 25) & BIT_MASK_7) << 5) | ((bincmd >> 7) & BIT_MASK_5);
+	uint8_t bit12 = (scrambled_imm >> 12) & 0b1;
+	uint8_t bit11 = scrambled_imm & 0b1;
+	uint8_t bits10to5 = (scrambled_imm >> 5) & 0b111111;
+	uint8_t bits4to1 = (scrambled_imm >> 1) & 0b1111;
+
+	uint16_t imm = ((bit12 << 12) | (bit11 << 11) | (bits10to5 << 5) | (bits4to1 << 1)) >> 1; // >> 1 because it shifts left 1 in addressing to ensure even
+	uint8_t f3 = bincmd >> 12 & BIT_MASK_3;
+	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
+	uint8_t rs2 = bincmd >> 20 & BIT_MASK_5;
+
+	switch(f3) {
+		case 0x0:
+			print_b_cmd_fixed_width("beq", rs1, rs2, imm);
+			break;
+		case 0x1:
+			print_b_cmd_fixed_width("beq", rs1, rs2, imm);
+			break;
+		case 0x4:
+			print_b_cmd_fixed_width("blt", rs1, rs2, imm);
+			break;
+		case 0x5:
+			print_b_cmd_fixed_width("bge", rs1, rs2, imm);
+			break;
+		case 0x6:
+			print_b_cmd_fixed_width("bltu", rs1, rs2, imm);
+			break;
+		case 0x7:
+			print_b_cmd_fixed_width("bgeu", rs1, rs2, imm);
+			break;
+		default:
+			printf("Unknown funct3(%d) in B type", f3);
+			break;
+	}
+
+}
+
+void handle_j_print_fixed_width(uint32_t bincmd) {
+	uint8_t rd = (bincmd >> 7) & BIT_MASK_5;
+	uint16_t scrambled_imm = (bincmd >> 12) & BIT_MASK_20;
+	uint8_t bit20 = (scrambled_imm >> 20) & 0b1;
+	uint16_t bits10to1 = (scrambled_imm >> 9) & 0b1111111111;
+	uint8_t bit11 = (scrambled_imm >> 8) & 0b1; 
+	uint8_t bits19to12 = (scrambled_imm) & 0b11111111;
+	uint16_t offset = ((bit20 << 20) | (bits19to12 << 12) | (bit11 << 11) | (bits10to1 << 1)) >> 1;
+    uint8_t count;
+	count = printf("jal x%d, %d", rd, offset);
+    if (count < FIXED_PRINT_WIDTH)
+    {
+        printf("%*s",FIXED_PRINT_WIDTH - count, "");
+    }
+}
+
+void print_command_fixed_width(uint32_t bincmd) {
+	if(bincmd) {
+		uint8_t opcode = GET_OPCODE(bincmd);
+		switch (opcode) {
+			case R_OPCODE:
+				handle_r_print_fixed_width(bincmd);
+				break;
+			case STORE_OPCODE:
+				handle_s_print_fixed_width(bincmd);
+				break;
+			case IMM_ALU_OPCODE:
+				handle_i_print_fixed_width(bincmd);
+				break;
+			case LOAD_OPCODE:
+				handle_i_print_fixed_width(bincmd);
+				break;
+			case BRANCH_OPCODE:
+				handle_b_print_fixed_width(bincmd);
+				break;
+			case JUMP_OPCODE:
+				handle_j_print_fixed_width(bincmd);
+				break;
+			default:
+				printf("Unknown command!");
+				break;
+		}
+	}
+	else
+	{
+		printf("%*s", FIXED_PRINT_WIDTH, "");
+	}
+}
+
 /************************************************************/
 /* Print the current pipeline                                                                                    */
 /************************************************************/
 void show_pipeline()
 {
-
+	printf("\nSTAGE  | IF %*s| ID %*s| EX %*s| MEM %*s| WB %*s|\n", FIXED_PRINT_WIDTH - 2, "", FIXED_PRINT_WIDTH - 2, "", FIXED_PRINT_WIDTH - 2, "", FIXED_PRINT_WIDTH - 3, "", FIXED_PRINT_WIDTH - 2, "");
+	printf("REGS   | CURRNET %*s| IF_ID %*s| ID_EX %*s| EX_MEM %*s| MEM_WB %*s|\n", FIXED_PRINT_WIDTH - 7, "", FIXED_PRINT_WIDTH - 5, "", FIXED_PRINT_WIDTH - 5, "", FIXED_PRINT_WIDTH - 6, "", FIXED_PRINT_WIDTH - 6, "");
+	printf("PC     | 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", CURRENT_STATE.PC, FIXED_PRINT_WIDTH - 10, "", IF_ID.PC, FIXED_PRINT_WIDTH - 10, "", ID_EX.PC, FIXED_PRINT_WIDTH - 10, "", EX_MEM.PC, FIXED_PRINT_WIDTH - 10, "", MEM_WB.PC, FIXED_PRINT_WIDTH - 10, "");
+	printf("IR     | 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", mem_read_32(CURRENT_STATE.PC), FIXED_PRINT_WIDTH - 10, "", IF_ID.IR, FIXED_PRINT_WIDTH - 10, "", ID_EX.IR, FIXED_PRINT_WIDTH - 10, "", EX_MEM.IR, FIXED_PRINT_WIDTH - 10, "", MEM_WB.IR, FIXED_PRINT_WIDTH - 10, "");
+	printf("Inst   | ");
+	print_command_fixed_width(mem_read_32(CURRENT_STATE.PC));
+	printf(" | ");
+	print_command_fixed_width(IF_ID.IR);
+	printf(" | ");
+	print_command_fixed_width(ID_EX.IR);
+	printf(" | ");
+	print_command_fixed_width(EX_MEM.IR);
+	printf(" | ");
+	print_command_fixed_width(MEM_WB.IR);
+	printf(" |\n");
+	printf("A      | ********** %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", FIXED_PRINT_WIDTH - 10, "", IF_ID.A, FIXED_PRINT_WIDTH - 10, "", ID_EX.A, FIXED_PRINT_WIDTH - 10, "", EX_MEM.A, FIXED_PRINT_WIDTH - 10, "", MEM_WB.A, FIXED_PRINT_WIDTH - 10, "");
+	printf("B      | ********** %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", FIXED_PRINT_WIDTH - 10, "", IF_ID.B, FIXED_PRINT_WIDTH - 10, "", ID_EX.B, FIXED_PRINT_WIDTH - 10, "", EX_MEM.B, FIXED_PRINT_WIDTH - 10, "", MEM_WB.B, FIXED_PRINT_WIDTH - 10, "");
+	printf("imm    | ********** %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", FIXED_PRINT_WIDTH - 10, "", IF_ID.imm, FIXED_PRINT_WIDTH - 10, "", ID_EX.imm, FIXED_PRINT_WIDTH - 10, "", EX_MEM.imm, FIXED_PRINT_WIDTH - 10, "", MEM_WB.imm, FIXED_PRINT_WIDTH - 10, "");
+	printf("ALUOut | ********** %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", FIXED_PRINT_WIDTH - 10, "", IF_ID.ALUOutput, FIXED_PRINT_WIDTH - 10, "", ID_EX.ALUOutput, FIXED_PRINT_WIDTH - 10, "", EX_MEM.ALUOutput, FIXED_PRINT_WIDTH - 10, "", MEM_WB.ALUOutput, FIXED_PRINT_WIDTH - 10, "");
+	printf("LMD    | ********** %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s| 0x%08X %*s|\n", FIXED_PRINT_WIDTH - 10, "", IF_ID.LMD, FIXED_PRINT_WIDTH - 10, "", ID_EX.LMD, FIXED_PRINT_WIDTH - 10, "", EX_MEM.LMD, FIXED_PRINT_WIDTH - 10, "", MEM_WB.LMD, FIXED_PRINT_WIDTH - 10, "");
+	
 }
 
 /***************************************************************/

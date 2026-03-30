@@ -127,6 +127,8 @@ static bool bubble = false;
 void help();
 uint32_t mem_read_32(uint32_t address);
 void mem_write_32(uint32_t address, uint32_t value);
+void mem_write_16(uint32_t address, uint16_t value);
+void mem_write_8(uint32_t address, uint8_t value);
 void cycle();
 void run(int num_cycles);
 void runAll();
