@@ -97,7 +97,7 @@ void mem_write_8(uint32_t address, uint8_t value)
 /***************************************************************/
 void cycle() {
 	handle_pipeline();
-	CURRENT_STATE = NEXT_STATE;
+	// CURRENT_STATE = NEXT_STATE; No longer needed. Current state is updated directly in WB since it is needed in ID
 	CYCLE_COUNT++;
 }
 
@@ -403,7 +403,7 @@ void WB()
 		case 0b0110111: //LUI
 			if (rd)
 			{
-				NEXT_STATE.REGS[rd] = MEM_WB.ALUOutput;
+				CURRENT_STATE.REGS[rd] = MEM_WB.ALUOutput;
 			}
 			INSTRUCTION_COUNT += 1;
 			break;
@@ -718,7 +718,7 @@ void IF()
 
     // Increment the PC by 4 to point to the next instruction.
 	// If this was a branch/jump and we were supposed to go somewhere else, this will be handled by ID in the NEXT clock cycle
-	NEXT_STATE.PC = CURRENT_STATE.PC + 4;
+	CURRENT_STATE.PC = CURRENT_STATE.PC + 4;
 }
 
 
