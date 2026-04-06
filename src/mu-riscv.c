@@ -624,50 +624,62 @@ void EX()
 
 }
 
+// Helper function to set the correct variables for a single bubble
+void set_bubble()
+{
+	bubble = true;
+	double_previous_rd = previous_rd;
+	previous_rd = 0;
+	double_last_lw = last_lw;
+	last_lw = false;
+}
+
 /************************************************************/
 /* instruction decode (ID) pipeline stage:                                                         */
 /************************************************************/
 void ID()
 {
 	uint8_t opcode;
-	uint32_t rs1, rs2, rd, rs1_val, rs2_val, A, B, imm, instruction;
+	uint32_t rs1, rs2, rd, A, B, imm, instruction;
+	bool proceed = true;
 
 	instruction = IF_ID.IR;
 	imm = 0;
 	A = 0;
 	B = 0;
 
-	rs1 = (instruction >> 15) & BIT_MASK_5;
-	rs2 = (instruction >> 20) & BIT_MASK_5;
+	rs1 = 0;
+	rs2 = 0;
 	rd = 0;
-	
-
-	rs1_val = CURRENT_STATE.REGS[rs1];
-	rs2_val = CURRENT_STATE.REGS[rs2];
 	
 	opcode = GET_OPCODE(instruction);
 	switch(opcode)
 	{
 		case R_OPCODE:
-		rd = (instruction >> 7) & BIT_MASK_5;
-		A = rs1_val;
-		B = rs2_val;
-		imm = 0;
-		break;
+			rs1 = (instruction >> 15) & BIT_MASK_5;
+			rs2 = (instruction >> 20) & BIT_MASK_5;
+			rd = (instruction >> 7) & BIT_MASK_5;
+			A = CURRENT_STATE.REGS[rs1];
+			B = CURRENT_STATE.REGS[rs2];
+			imm = 0;
+			break;
 		case IMM_ALU_OPCODE:
 		case LOAD_OPCODE:
-		rd = (instruction >> 7) & BIT_MASK_5;
-		A = rs1_val;
-		B = 0;
+			rs1 = (instruction >> 15) & BIT_MASK_5;
+			rd = (instruction >> 7) & BIT_MASK_5;
+			A = CURRENT_STATE.REGS[rs1];
+			B = 0;
 			imm = (instruction >> 20) & (BIT_MASK_12);
 			if (imm & 0x800)
 			{
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-			case STORE_OPCODE:
-			A = rs1_val;
-			B = rs2_val;
+		case STORE_OPCODE:
+			rs1 = (instruction >> 15) & BIT_MASK_5;
+			rs2 = (instruction >> 20) & BIT_MASK_5;
+			A = CURRENT_STATE.REGS[rs1];
+			B = CURRENT_STATE.REGS[rs2];
 			imm = ((instruction >> 25) & BIT_MASK_7) << 5;
 			imm |= (instruction >> 7) & BIT_MASK_5;
 			if (imm & 0x800)
@@ -676,8 +688,10 @@ void ID()
 			}
 			break;
 		case BRANCH_OPCODE:
-			A = rs1_val;
-			B = rs2_val;
+			rs1 = (instruction >> 15) & BIT_MASK_5;
+			rs2 = (instruction >> 20) & BIT_MASK_5;
+			A = CURRENT_STATE.REGS[rs1];
+			B = CURRENT_STATE.REGS[rs2];
 			imm = ((instruction >> 31) & 1) << 12;
 			imm |= ((instruction >> 7) & 1) << 11;
 			imm |= ((instruction >> 25) & 0b111111) << 5;
@@ -688,6 +702,7 @@ void ID()
 			}
 			break;
 		case JUMP_OPCODE:
+			rd = (instruction >> 7) & BIT_MASK_5;
 			A = 0;
 			B = 0;
 			imm = ((instruction >> 31) & 1) << 20;
@@ -715,20 +730,57 @@ void ID()
 		// Data hazard
 		if (ENABLE_FORWARDING)
 		{
-			// NOT IMPLEMENTED YET!!
+			if (rs1 == previous_rd)
+			{
+				if (last_lw)
+				{
+					// Last instruction is a load causing a hazard, we still
+					// need to bubble
+					set_bubble();
+					proceed = false;
+				}
+				else
+				{
+					// Last instruction was not a load, we can get the value we need from the output of the ALU
+					A = EX_MEM.ALUOutput;
+				}
+			}
+			else if (rs1 == double_previous_rd)
+			{
+				// All instruction types (with destinations) will have their result in the MEM_WB.ALUOutput pipeline register at this point
+				A = MEM_WB.ALUOutput;
+			}
+			if (rs2 == previous_rd)
+			{
+				if (last_lw)
+				{
+					// Last instruction is a load causing a hazard, we still
+					// need to bubble
+					set_bubble();
+					proceed = false;
+				}
+				else
+				{
+					// Last instruction was not a load, we can get the value we need from the output of the ALU
+					B = EX_MEM.ALUOutput;
+				}
+			}
+			else if (rs2 == double_previous_rd)
+			{
+				// All instruction types (with destinations) will have their result in the MEM_WB.ALUOutput pipeline register at this point
+				B = MEM_WB.ALUOutput;
+			}
 		}
-		else
-		{
+		else {
 			// Forwarding is off, bubble
-			double_previous_rd = previous_rd;
-			previous_rd = 0;
-			bubble = true;
+			set_bubble();
+			proceed = false;
 		}
-
 	}
-	else
+	
+	if (proceed)
 	{
-		// No data hazard, proceede
+		// Bubble did not happen, let this instruction proceed through the pipeline
 		ID_EX.PC = IF_ID.PC;
 		ID_EX.IR = IF_ID.IR;
 		ID_EX.A = A;
@@ -736,6 +788,8 @@ void ID()
 		ID_EX.imm = imm;
 		double_previous_rd = previous_rd;
 		previous_rd = rd;
+		double_last_lw = last_lw;
+		last_lw = (opcode == LOAD_OPCODE); 
 		memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
 	}
 

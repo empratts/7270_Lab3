@@ -1,3 +1,6 @@
 .vscode
 mu-riscv
 Lab3_4270.pdf
+.clang-format
+*.zip
+*.docx
