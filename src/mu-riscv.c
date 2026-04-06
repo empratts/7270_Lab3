@@ -6,6 +6,8 @@
 
 #define FIXED_PRINT_WIDTH 20
 
+uint32_t BUBBLE_COUNT = 0;
+
 /***************************************************************/
 /* Print out a list of commands available                                                                  */
 /***************************************************************/
@@ -136,6 +138,7 @@ void runAll() {
 		cycle();
 	}
 	printf("Simulation Finished.\n\n");
+	printf("Instructions Executed: %d\nNOPs inserted: %d\n", INSTRUCTION_COUNT, BUBBLE_COUNT);
 }
 
 /***************************************************************/
@@ -301,6 +304,7 @@ void reset() {
 
 	/*reset PC*/
 	INSTRUCTION_COUNT = 0;
+	BUBBLE_COUNT = 0;
 	CURRENT_STATE.PC =  MEM_TEXT_BEGIN;
 	CURRENT_STATE.REGS[2] = MEM_STACK_BEGIN;
 	NEXT_STATE = CURRENT_STATE;
@@ -627,6 +631,7 @@ void EX()
 // Helper function to set the correct variables for a single bubble
 void set_bubble()
 {
+	BUBBLE_COUNT++;
 	bubble = true;
 	double_previous_rd = previous_rd;
 	previous_rd = 0;
