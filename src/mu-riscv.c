@@ -411,6 +411,8 @@ void WB()
 			INSTRUCTION_COUNT += 1;
 			break;
 	}
+
+	memset(&MEM_WB, 0, sizeof(CPU_Pipeline_Reg));
 }
 
 /************************************************************/
@@ -426,7 +428,6 @@ void MEM()
 	int16_t lh_value;
 	uint32_t loaded_value;
 
-	memset(&MEM_WB, 0, sizeof(CPU_Pipeline_Reg));
 	MEM_WB.PC = EX_MEM.PC;
 	MEM_WB.IR = EX_MEM.IR;
 	MEM_WB.imm = EX_MEM.imm;
@@ -477,6 +478,8 @@ void MEM()
 			MEM_WB.ALUOutput = EX_MEM.ALUOutput;
 			break;
 	}
+
+	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 }
 
 /************************************************************/
@@ -500,7 +503,6 @@ void EX()
 	imm_signed = ID_EX.imm;
 	ALU_Result = 0;
 
-	memset(&EX_MEM, 0, sizeof(CPU_Pipeline_Reg));
 	EX_MEM.PC = ID_EX.PC;
 	EX_MEM.IR = ID_EX.IR;
 	EX_MEM.A = A;
@@ -618,6 +620,8 @@ void EX()
 
 	EX_MEM.ALUOutput = ALU_Result;
 
+	memset(&ID_EX, 0, sizeof(CPU_Pipeline_Reg));
+
 }
 
 /************************************************************/
@@ -626,38 +630,44 @@ void EX()
 void ID()
 {
 	uint8_t opcode;
-	uint32_t A, B, imm, instruction;
+	uint32_t rs1, rs2, rd, rs1_val, rs2_val, A, B, imm, instruction;
 
 	instruction = IF_ID.IR;
 	imm = 0;
 	A = 0;
 	B = 0;
 
-	memset(&ID_EX, 0, sizeof(CPU_Pipeline_Reg));
-	ID_EX.PC = IF_ID.PC;
-	ID_EX.IR = IF_ID.IR;
+	rs1 = (instruction >> 15) & BIT_MASK_5;
+	rs2 = (instruction >> 20) & BIT_MASK_5;
+	rd = 0;
+	
 
+	rs1_val = CURRENT_STATE.REGS[rs1];
+	rs2_val = CURRENT_STATE.REGS[rs2];
+	
 	opcode = GET_OPCODE(instruction);
 	switch(opcode)
 	{
 		case R_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
-			imm = 0;
-			break;
+		rd = (instruction >> 7) & BIT_MASK_5;
+		A = rs1_val;
+		B = rs2_val;
+		imm = 0;
+		break;
 		case IMM_ALU_OPCODE:
 		case LOAD_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = 0;
+		rd = (instruction >> 7) & BIT_MASK_5;
+		A = rs1_val;
+		B = 0;
 			imm = (instruction >> 20) & (BIT_MASK_12);
 			if (imm & 0x800)
 			{
 				imm |= 0xFFFFFFF000;
 			}
 			break;
-		case STORE_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			case STORE_OPCODE:
+			A = rs1_val;
+			B = rs2_val;
 			imm = ((instruction >> 25) & BIT_MASK_7) << 5;
 			imm |= (instruction >> 7) & BIT_MASK_5;
 			if (imm & 0x800)
@@ -666,8 +676,8 @@ void ID()
 			}
 			break;
 		case BRANCH_OPCODE:
-			A = CURRENT_STATE.REGS[(instruction >> 15) & BIT_MASK_5];
-			B = CURRENT_STATE.REGS[(instruction >> 20) & BIT_MASK_5];
+			A = rs1_val;
+			B = rs2_val;
 			imm = ((instruction >> 31) & 1) << 12;
 			imm |= ((instruction >> 7) & 1) << 11;
 			imm |= ((instruction >> 25) & 0b111111) << 5;
@@ -690,6 +700,7 @@ void ID()
 			}
 			break;
 		case 0b0110111: //LUI
+			rd = (instruction >> 7) & BIT_MASK_5;
 			A = 0;
 			B = 0;
 			imm = instruction & 0xFFFFF000;
@@ -698,9 +709,36 @@ void ID()
 			break;
 	}
 
-	ID_EX.A = A;
-	ID_EX.B = B;
-	ID_EX.imm = imm;
+	if ((rs1 != 0 && (rs1 == previous_rd || rs1 == double_previous_rd)) ||
+	    (rs2 != 0 && (rs2 == previous_rd || rs2 == double_previous_rd)))
+	{
+		// Data hazard
+		if (ENABLE_FORWARDING)
+		{
+			// NOT IMPLEMENTED YET!!
+		}
+		else
+		{
+			// Forwarding is off, bubble
+			double_previous_rd = previous_rd;
+			previous_rd = 0;
+			bubble = true;
+		}
+
+	}
+	else
+	{
+		// No data hazard, proceede
+		ID_EX.PC = IF_ID.PC;
+		ID_EX.IR = IF_ID.IR;
+		ID_EX.A = A;
+		ID_EX.B = B;
+		ID_EX.imm = imm;
+		double_previous_rd = previous_rd;
+		previous_rd = rd;
+		memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
+	}
+
 }
 
 /************************************************************/
@@ -712,7 +750,6 @@ void IF()
 	uint32_t instuction = mem_read_32(CURRENT_STATE.PC);
     
     // Store the fetched instruction in the IR for the next state.
-	memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
 	IF_ID.IR = instuction;
 	IF_ID.PC = CURRENT_STATE.PC;
 
@@ -867,7 +904,9 @@ void handle_i_print(uint32_t bincmd) {
 	uint8_t rd = bincmd >> 7 & BIT_MASK_5;
 	uint8_t funct3 = bincmd >> 12 & BIT_MASK_3;
 	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
-	uint16_t imm = bincmd >> 20 & (BIT_MASK_12);
+	int16_t imm = bincmd >> 20 & (BIT_MASK_12);
+	imm <<= 4;  //sign extension
+	imm >>= 4;
 	switch(opcode) {
 		case IMM_ALU_OPCODE:
 			switch(funct3) {
@@ -949,7 +988,8 @@ void handle_b_print(uint32_t bincmd) {
 	uint8_t bits10to5 = (scrambled_imm >> 5) & 0b111111;
 	uint8_t bits4to1 = (scrambled_imm >> 1) & 0b1111;
 
-	uint16_t imm = ((bit12 << 12) | (bit11 << 11) | (bits10to5 << 5) | (bits4to1 << 1)) >> 1; // >> 1 because it shifts left 1 in addressing to ensure even
+	// NOTE: I am 99% sure this is not correct. I think it should be changed to show the actual offset, also needs to be sign extended
+	int16_t imm = ((bit12 << 12) | (bit11 << 11) | (bits10to5 << 5) | (bits4to1 << 1)) >> 1; // >> 1 because it shifts left 1 in addressing to ensure even
 	uint8_t f3 = bincmd >> 12 & BIT_MASK_3;
 	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
 	uint8_t rs2 = bincmd >> 20 & BIT_MASK_5;
@@ -999,15 +1039,15 @@ void print_s_cmd(char* cmd_name, uint8_t rs2, uint8_t offset, uint8_t rs1) {
     printf("%s x%d, %d(x%d)", cmd_name, rs2, offset, rs1);
 }
 
-void print_i_type1_cmd(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+void print_i_type1_cmd(char* cmd_name, uint8_t rd, uint8_t rs1, int16_t imm) {
     printf("%s x%d, x%d, %d", cmd_name, rd, rs1, imm);
 }
 
-void print_i_type2_cmd(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+void print_i_type2_cmd(char* cmd_name, uint8_t rd, uint8_t rs1, int16_t imm) {
     printf("%s x%d, %d(x%d)", cmd_name, rd, imm, rs1);
 }
 
-void print_b_cmd(char* cmd_name, uint8_t rs1, uint8_t rs2, uint16_t imm) {
+void print_b_cmd(char* cmd_name, uint8_t rs1, uint8_t rs2, int16_t imm) {
 	printf("%s x%d, x%d, %d", cmd_name, rs1, rs2, imm);
 }
 
@@ -1029,7 +1069,7 @@ void print_s_cmd_fixed_width(char* cmd_name, uint8_t rs2, uint8_t offset, uint8_
     }
 }
 
-void print_i_type1_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+void print_i_type1_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, int16_t imm) {
     uint8_t count;
     count = printf("%s x%d, x%d, %d", cmd_name, rd, rs1, imm);
     if (count < FIXED_PRINT_WIDTH)
@@ -1038,7 +1078,7 @@ void print_i_type1_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint
     }
 }
 
-void print_i_type2_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, uint16_t imm) {
+void print_i_type2_cmd_fixed_width(char* cmd_name, uint8_t rd, uint8_t rs1, int16_t imm) {
     uint8_t count;
     count = printf("%s x%d, %d(x%d)", cmd_name, rd, imm, rs1);
     if (count < FIXED_PRINT_WIDTH)
@@ -1142,7 +1182,9 @@ void handle_i_print_fixed_width(uint32_t bincmd) {
 	uint8_t rd = bincmd >> 7 & BIT_MASK_5;
 	uint8_t funct3 = bincmd >> 12 & BIT_MASK_3;
 	uint8_t rs1 = bincmd >> 15 & BIT_MASK_5;
-	uint16_t imm = bincmd >> 20 & (BIT_MASK_12);
+	int16_t imm = bincmd >> 20 & (BIT_MASK_12);
+	imm <<= 4; // Sign extending
+	imm >>= 4;
 	switch(opcode) {
 		case IMM_ALU_OPCODE:
 			switch(funct3) {
