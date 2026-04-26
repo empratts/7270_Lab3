@@ -404,6 +404,7 @@ void WB()
 		case R_OPCODE:
 		case IMM_ALU_OPCODE:
 		case LOAD_OPCODE:
+		case JUMP_OPCODE:
 		case 0b0110111: //LUI
 			if (rd)
 			{
@@ -496,6 +497,8 @@ void EX()
 	uint32_t A, B, imm, instruction;
 	int32_t A_signed, B_signed, imm_signed;
 	uint32_t ALU_Result;
+	bool branch_taken = false;
+	uint32_t target_pc = 0;
 
 	instruction = ID_EX.IR;
 
@@ -589,13 +592,13 @@ void EX()
 					ALU_Result = A ^ imm;
 					break;
 				case 0x5:
-					if(funct7 == 0x00)
+					if(funct7 == 0x00) //srli
 						{
-							ALU_Result = A >> (imm & 0b11111); //?????
+							ALU_Result = A >> (imm & 0b11111);
 						}
-					else if(funct7 == 0x20)
+					else if(funct7 == 0x20) //srai
 						{
-							ALU_Result = A >> (imm & 0b11111); //?????
+							ALU_Result = A_signed >> (imm & 0b11111);
 						}
 					break;
 				case 0x6:
@@ -605,6 +608,7 @@ void EX()
 					ALU_Result = A & imm;
 					break;
 			}
+			break;
 		case LOAD_OPCODE:
 			ALU_Result = A + imm;
 			break;
@@ -612,8 +616,43 @@ void EX()
 			ALU_Result = A + imm;
 			break;
 		case BRANCH_OPCODE:
+			switch(funct3)
+			{
+				case 0x0:  //beq
+					branch_taken = (A==B);
+					break;
+				case 0x1:  //bne
+					branch_taken = (A!=B);
+					break;
+				case 0x4:  //blt
+					branch_taken = (A_signed < B_signed);
+					break;
+				case 0x5:  //bge
+					branch_taken = (A_signed >= B_signed);
+					break;
+				case 0x6:  //btlu
+					branch_taken = (A < B);
+					break;
+				case 0x7:
+					branch_taken = (A >= B);
+					break;
+			}
+			if(branch_taken) {
+				target_pc == ID_EX.PC + imm;
+				CURRENT_STATE.PC = target_pc;
+				memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
+				BUBBLE_COUNT++;
+			}
 			break;
 		case JUMP_OPCODE:
+			target_pc = ID_EX.PC + imm;
+			CURRENT_STATE.PC = target_pc;
+
+			ALU_Result = ID_EX.PC + 4;
+
+			memset(&IF_ID, 0, sizeof(CPU_Pipeline_Reg));
+			BUBBLE_COUNT++;
+
 			break;
 		case 0b0110111: //LUI
 			ALU_Result = imm;
@@ -788,10 +827,17 @@ void ID()
 		// Bubble did not happen, let this instruction proceed through the pipeline
 		ID_EX.PC = IF_ID.PC;
 		ID_EX.IR = IF_ID.IR;
-		ID_EX.A = A;
+		ID_EX.A = A
 		ID_EX.B = B;
 		ID_EX.imm = imm;
 		double_previous_rd = previous_rd;
+		if(opcode == R_OPCODE || opcode == IMM_ALU_OPCODE || opcode == LOAD_OPCODE ||
+			opcode == JUMP_OPCODE || opcode == 0b0110111) {
+				previous_rd = rd;
+			}
+			else {
+				previous_rd = 0;
+			}
 		previous_rd = rd;
 		double_last_lw = last_lw;
 		last_lw = (opcode == LOAD_OPCODE); 
@@ -1058,7 +1104,7 @@ void handle_b_print(uint32_t bincmd) {
 			print_b_cmd("beq", rs1, rs2, imm);
 			break;
 		case 0x1:
-			print_b_cmd("beq", rs1, rs2, imm);
+			print_b_cmd("bne", rs1, rs2, imm);
 			break;
 		case 0x4:
 			print_b_cmd("blt", rs1, rs2, imm);
@@ -1335,7 +1381,7 @@ void handle_b_print_fixed_width(uint32_t bincmd) {
 			print_b_cmd_fixed_width("beq", rs1, rs2, imm);
 			break;
 		case 0x1:
-			print_b_cmd_fixed_width("beq", rs1, rs2, imm);
+			print_b_cmd_fixed_width("bne", rs1, rs2, imm);
 			break;
 		case 0x4:
 			print_b_cmd_fixed_width("blt", rs1, rs2, imm);
